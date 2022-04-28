@@ -1,3 +1,35 @@
+#############
+## LOGGING ##
+#############
+
+import logging
+log_sub = '{'
+log_fmt = '[{levelname:1.1} {asctime} {module}:{lineno}] {message}'
+log_date_fmt = '%y%m%d %H:%M:%S'
+
+DEBUG = False
+if DEBUG:
+    level = logging.DEBUG
+else:
+    level = logging.INFO
+LOGGER = logging.getLogger(__name__)
+logging.basicConfig(
+    level=level,
+    style=log_sub,
+    format=log_fmt,
+    datefmt=log_date_fmt,
+)
+
+LOGDEBUG = LOGGER.debug
+LOGINFO = LOGGER.info
+LOGWARNING = LOGGER.warning
+LOGERROR = LOGGER.error
+LOGEXCEPTION = LOGGER.exception
+
+#############
+## IMPORTS ##
+#############
+
 import numpy as np
 import matplotlib.pyplot as plt
 import lightkurve as lk
@@ -79,22 +111,27 @@ class CPM(object):
         self.is_target_set = True
 
     def set_exclusion(self, exclusion_size=5, method="closest"):
-        """Set the exclusion region around the target pixel. 
-        
-        The exclusion region is necessary to ensure that pixels from the same source are not chosen as predictor pixels.
+        """Set the exclusion region around the target pixel.
+
+        The exclusion region is necessary to ensure that pixels from the same
+        source are not chosen as predictor pixels.
 
         Args:
-            exclusion_size (Optional[int]): Specifies the size of the exclusion region. The default setting is to exclude a square region
-                with a sidelength of (2 * ``exclusion_size`` + 1) pixels surrounding the target pixel.
+            exclusion_size (Optional[int]): Specifies the size of the exclusion
+            region. The default setting is to exclude a square region with a
+            sidelength of (2 * ``exclusion_size`` + 1) pixels surrounding the
+            target pixel.
+
             method (Optional): Specify the method for excluding a region.
-                "closest": Excludes a square region surrounding the target pixel (default).
+                "closest": Excludes a square region surrounding the target
+                    pixel (default).
                 "cross": Excludes a cross region.
                 "row_exclude": Excludes a set of rows.
                 "col_exclude": Excludes a set of columns.
         """
 
         if self.is_target_set == False:
-            print(
+            LOGINFO(
                 "Please set the target pixel to predict using the set_target() method."
             )
             return
@@ -104,7 +141,6 @@ class CPM(object):
         self.exclusion_size = exclusion_size
         sidelength_x = self.cutout_data.cutout_sidelength_x
         sidelength_y = self.cutout_data.cutout_sidelength_y
-        
 
         excluded_pixels = np.full(self.cutout_data.fluxes[0].shape, False)
         if method == "closest":
@@ -133,41 +169,49 @@ class CPM(object):
 
     def set_predictor_pixels(self, n=256, method="similar_brightness", seed=None):
         """Set the predictor pixels (features) used to perform CPM.
-        
-        CPM attempts to fit to the target pixel's light curve using the linear combination
-        of the predictor pixels' light curves. The exclusion region must be set prior to 
-        setting the predictor pixels as we do not want to use pixels close to the target pixel.
+
+        CPM attempts to fit to the target pixel's light curve using the linear
+        combination of the predictor pixels' light curves. The exclusion region
+        must be set prior to setting the predictor pixels as we do not want to
+        use pixels close to the target pixel.
 
         Args:
-            n (Optional[int]): Number of predictor pixels to use. This number should change based on 
-                the size of your cutout (the number of pixels in your image). 
-                The default setting is 256 (for a 100x100 pixel cutout). If your cutout is smaller 
-                make this number smaller and if your cutout is larger you might get a better fit if you
+            n (Optional[int]): Number of predictor pixels to use. This number
+                should change based on the size of your cutout (the number of
+                pixels in your image).  The default setting is 256 (for a 100x100
+                pixel cutout). If your cutout is smaller make this number smaller
+                and if your cutout is larger you might get a better fit if you
                 increase this number.
-            method (Optional): Specify the method for choosing predictor pixels. Pixels in the excluded region are never chosen.
-                "cosine_similarity": Choose ``n`` predictor pixels based on the cosine similarity of a given 
-                    pixel's light curve with the target pixel's lightcurve. In other words,
-                    this method chooses the top ``n`` pixels with a similar trend to the target pixel.
+
+            method (Optional): Specify the method for choosing predictor
+            pixels. Pixels in the excluded region are never chosen.
+
+                "cosine_similarity": Choose ``n`` predictor pixels based on the
+                    cosine similarity of a given pixel's light curve with the
+                    target pixel's lightcurve. In other words, this method chooses
+                    the top ``n`` pixels with a similar trend to the target pixel.
                 "random": Randomly choose ``n`` predictor pixels.
-                "similar_brightness": Choose ``n`` predictor pixels based on how close a given pixel's median brightness 
-                    is to the target pixel's median brightness. This method potentially chooses variable pixels which
-                    is not ideal (default). 
-            seed (Optional[int]): The seed passed to ``np.random.seed`` to be able to reproduce predictor pixels using 
-                the "random" method. The other methods are deterministic and are always reproducible.
+                "similar_brightness": Choose ``n`` predictor pixels based on
+                    how close a given pixel's median brightness is to the target
+                    pixel's median brightness. This method potentially chooses
+                    variable pixels which is not ideal (default).
+
+            seed (Optional[int]): The seed passed to ``np.random.seed`` to be
+                able to reproduce predictor pixels using the "random" method. The
+                other methods are deterministic and are always reproducible.
         """
 
         if seed != None:
             np.random.seed(seed=seed)
 
         if (self.is_target_set == False) or (self.is_exclusion_set == False):
-            print("Please set the target pixel and exclusion region.")
+            LOGINFO("Please set the target pixel and exclusion region.")
             return
 
         self.method_choose_predictor_pixels = method
         self.num_predictor_pixels = n
         sidelength_x = self.cutout_data.cutout_sidelength_x
         sidelength_y = self.cutout_data.cutout_sidelength_y
-        
 
         # I'm going to do this in 1D by assinging individual pixels a single index instead of two.
         coordinate_idx = np.arange(sidelength_x * sidelength_y)
@@ -259,12 +303,15 @@ class CPM(object):
         self.prediction = prediction
         return prediction
 
-    def plot_model(self, size_predictors=10):
+    def plot_model(self, size_predictors=10, figpath=None):
 
         fig, ax = plt.subplots()
         self._plot_model_onto_axes(ax, size_predictors=size_predictors)
-        plt.show()
-        return fig, ax
+        if figpath is None:
+            plt.show()
+            return fig, ax
+        else:
+            plt.savefig(figpath, bbox_inches="tight", dpi=300)
 
     def _plot_model_onto_axes(self, ax, size_predictors=10):
 

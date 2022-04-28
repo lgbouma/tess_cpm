@@ -16,7 +16,7 @@ class CustomModel(object):
         if isinstance(cutout_data, CutoutData):
             self.cutout_data = cutout_data
             self.time = cutout_data.time
-        
+
         self.num_terms = None
         self.m = None
         self.reg = None

@@ -1,3 +1,35 @@
+#############
+## LOGGING ##
+#############
+
+import logging
+log_sub = '{'
+log_fmt = '[{levelname:1.1} {asctime} {module}:{lineno}] {message}'
+log_date_fmt = '%y%m%d %H:%M:%S'
+
+DEBUG = False
+if DEBUG:
+    level = logging.DEBUG
+else:
+    level = logging.INFO
+LOGGER = logging.getLogger(__name__)
+logging.basicConfig(
+    level=level,
+    style=log_sub,
+    format=log_fmt,
+    datefmt=log_date_fmt,
+)
+
+LOGDEBUG = LOGGER.debug
+LOGINFO = LOGGER.info
+LOGWARNING = LOGGER.warning
+LOGERROR = LOGGER.error
+LOGEXCEPTION = LOGGER.exception
+
+#############
+## IMPORTS ##
+#############
+
 import numpy as np
 import matplotlib.pyplot as plt
 from astroquery.mast import Tesscut
@@ -11,17 +43,20 @@ class CutoutData(object):
 
     Args:
         path (str): path to file
-        remove_bad (bool): If ``True``, remove the data points that have been flagged by the TESS team. Default is ``True``.
-        verbose (bool): If ``True``, print statements containing information. Default is ``True``.
-        provenance (str): If ``TessCut``, the image being passed through is a TessCut cutout. If ``eleanor``, it is an eleanor postcard.
-
+        remove_bad (bool): If ``True``, remove the data points that have been
+            flagged by the TESS team. Default is ``True``.
+        verbose (bool): If ``True``, print statements containing information.
+            Default is ``True``.
+        provenance (str): If ``TessCut``, the image being passed through is a
+            TessCut cutout. If ``eleanor``, it is an eleanor postcard.
     """
 
-    def __init__(self, path, remove_bad=True, verbose=True, 
-                 provenance='TessCut', quality=None, bkg_subtract=False, bkg_n=100):
+    def __init__(self, path, remove_bad=True, verbose=True,
+                 provenance='TessCut', quality=None, bkg_subtract=False,
+                 bkg_n=100):
         self.file_path = path
         self.file_name = path.split("/")[-1]
-        
+
         if provenance == 'TessCut':
             s = self.file_name.split("-")
             self.sector = s[1].strip("s").lstrip("0")
@@ -39,10 +74,11 @@ class CutoutData(object):
                 try:
                     self.wcs_info = WCS(hdu[2].header)  # pylint: disable=no-member
                 except Exception as inst:
-                    print(inst)
-                    print("WCS Info could not be retrieved")
-        
+                    LOGEXCEPTION(inst)
+                    LOGEXCEPTION("WCS Info could not be retrieved")
+
         elif provenance == 'eleanor':
+
             with fits.open(path, mode="readonly") as hdu:
                 self.sector = int(hdu[2].header["SECTOR"])  # pylint: disable=no-member
                 self.camera = int(hdu[2].header["CAMERA"])  # pylint: disable=no-member
@@ -59,9 +95,9 @@ class CutoutData(object):
                 try:
                     self.wcs_info = WCS(hdu[2].header)  # pylint: disable=no-member
                 except Exception as inst:
-                    print(inst)
-                    print("WCS Info could not be retrieved")
-                    
+                    LOGEXCEPTION(inst)
+                    LOGEXCEPTION("WCS Info could not be retrieved")
+
         else:
             raise ValueError('Data provenance not understood. Pass through TessCut or eleanor')
 
@@ -70,7 +106,7 @@ class CutoutData(object):
         if remove_bad == True:
             bool_good = self.quality == 0
             if verbose == True:
-                print(
+                LOGINFO(
                     f"Removing {np.sum(~bool_good)} bad data points "
                     f"(out of {np.size(bool_good)}) using the TESS provided QUALITY array"
                 )
@@ -80,7 +116,7 @@ class CutoutData(object):
 
         # basic background correction based on subtracting median flux light curve of 500 faintest pixels
         if bkg_subtract:
-            print("Performing initial basic background subtraction.")
+            LOGINFO("Performing initial basic background subtraction.")
             self.flux_medians = np.nanmedian(self.fluxes, axis=0)
             self.faint_pixel_locations = np.unravel_index(np.argpartition(self.flux_medians.ravel(),bkg_n)[:bkg_n], 
                                                      self.flux_medians.shape)
@@ -94,7 +130,7 @@ class CutoutData(object):
         self.flux_medians = np.nanmedian(self.fluxes, axis=0)
         self.cutout_sidelength_x = self.fluxes[0].shape[0]
         self.cutout_sidelength_y = self.fluxes[0].shape[1]
-        
+
         self.flattened_flux_medians = self.flux_medians.reshape(
             self.cutout_sidelength_x * self.cutout_sidelength_y
         )
@@ -106,6 +142,3 @@ class CutoutData(object):
         )
 
         self.normalized_flux_errors = self.flux_errors / self.flux_medians
-
-
-

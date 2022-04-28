@@ -1,3 +1,35 @@
+#############
+## LOGGING ##
+#############
+
+import logging
+log_sub = '{'
+log_fmt = '[{levelname:1.1} {asctime} {module}:{lineno}] {message}'
+log_date_fmt = '%y%m%d %H:%M:%S'
+
+DEBUG = False
+if DEBUG:
+    level = logging.DEBUG
+else:
+    level = logging.INFO
+LOGGER = logging.getLogger(__name__)
+logging.basicConfig(
+    level=level,
+    style=log_sub,
+    format=log_fmt,
+    datefmt=log_date_fmt,
+)
+
+LOGDEBUG = LOGGER.debug
+LOGINFO = LOGGER.info
+LOGWARNING = LOGGER.warning
+LOGERROR = LOGGER.error
+LOGEXCEPTION = LOGGER.exception
+
+#############
+## IMPORTS ##
+#############
+
 import numpy as np
 import matplotlib.pyplot as plt
 import lightkurve as lk
@@ -53,7 +85,7 @@ class PixelModel(object):
     @property
     def model_components(self):
         return list(filter(bool, [self.cpm, self.poly_model, self.custom_model]))
-    
+
     @property
     def values_dict(self):
         return {
@@ -65,7 +97,7 @@ class PixelModel(object):
             "cpm_subtracted_flux" : self.cpm_subtracted_flux,
             "rescaled_cpm_subtracted_flux" : self.rescaled_cpm_subtracted_flux
         }
-    
+
     @property
     def split_values_dict(self):
         return {
@@ -112,20 +144,20 @@ class PixelModel(object):
     def add_custom_model(self, flux):
         custom_model = CustomModel(self.cutout_data, flux)
         self.custom_model = custom_model
-    
+
     def remove_custom_model(self, flux):
         self.custom_model = None
 
     def set_regs(self, regs=[], verbose=True):
         if len(regs) != len(self.model_components):
-            print(
+            LOGINFO(
                 "You need to specify the same number of regularization parameters as the number of model components."
             )
             return
         self.regs = regs
         for reg, model in zip(self.regs, self.model_components):
             if verbose:
-                print(f"Setting {model.name}'s regularization to {reg}")
+                LOGINFO(f"Setting {model.name}'s regularization to {reg}")
             model.set_L2_reg(reg)
         self._create_reg_matrix()
         self._create_design_matrix()
@@ -138,32 +170,32 @@ class PixelModel(object):
 
     def fit(self, y=None, m=None, mask=None, save=True, verbose=True):
         if self.regs == []:
-            print("Please set the L-2 regularizations first.")
+            LOGINFO("Please set the L-2 regularizations first.")
             return
         # self._create_reg_matrix()
         # self._create_design_matrix()
         if y is None:
-            print("Fitting using full light curve.")
+            LOGINFO("Fitting using full light curve.")
             y = self.norm_flux
         if m is None:
-            print("Fitting using full light curve.")
+            LOGINFO("Fitting using full light curve.")
             m = self.design_matrix
         if mask is None:
             mask = np.full(y.shape, True)
         elif mask is not None and verbose:
-            print(f"Using user-provided mask. Clipping {np.sum(~mask)} points.")  # pylint: disable=invalid-unary-operand-type
+            LOGINFO(f"Using user-provided mask. Clipping {np.sum(~mask)} points.")  # pylint: disable=invalid-unary-operand-type
         y = y[mask]
         m = m[mask]
 
         a = np.dot(m.T, m) + self.reg_matrix
         b = np.dot(m.T, y)
         if verbose:
-            print(f"Numpy Defined Condition Number: {np.linalg.cond(a)}")
+            LOGINFO(f"Numpy Defined Condition Number: {np.linalg.cond(a)}")
             # eigvals, eigvecs = np.linalg.eigh(a)
             # eigvals = eigvals[np.nonzero(eigvals)]
             # max_eigval, min_eigval = eigvals.max(), eigvals.min()
             # eigval_ratio = max_eigval / min_eigval
-            # print(f"Eigenvalue Ratio Condition Number: {eigval_ratio:.2f} (Max: {max_eigval:.2f}, Min: {min_eigval:.2f})")
+            # LOGINFO(f"Eigenvalue Ratio Condition Number: {eigval_ratio:.2f} (Max: {max_eigval:.2f}, Min: {min_eigval:.2f})")
         params = np.linalg.solve(a, b)
         if save:
             self.params = params
@@ -175,15 +207,14 @@ class PixelModel(object):
         return params
 
     def holdout_fit(self, k=10, mask=None, verbose=True):
+
         if self.regs == []:
-            print("Please set the L-2 regularizations first.")
+            LOGINFO("Please set the L-2 regularizations first.")
             return
 
         if mask is None:
             mask = np.full(self.time.shape, True)
-        # time = self.time[mask]
-        # y = self.norm_flux[mask]
-        # m = self.design_matrix[mask]
+
         time = self.time
         y = self.norm_flux
         m = self.design_matrix
@@ -205,34 +236,69 @@ class PixelModel(object):
             params = self.fit(y_train, m_train, mask=mask_train, save=False, verbose=verbose)
             param_matrix[i] = params
             i += 1
+
         self.split_time = times
         self.split_fluxes = y_tests
         return (times, y_tests, m_test_matrix, param_matrix)
 
+
     def holdout_fit_predict(self, k=10, mask=None, save=True, verbose=False):
+
         self._reset_values()
-        times, y_tests, m_tests, param_matrix = self.holdout_fit(k, mask, verbose=verbose)
+
+        times, y_tests, m_tests, param_matrix = (
+            self.holdout_fit(k, mask, verbose=verbose)
+        )
+
         predictions = [np.dot(m, param) for m, param in zip(m_tests, param_matrix)]
+
         self.split_prediction = predictions
         self.prediction = np.concatenate(predictions)
-        for m, param in zip(m_tests, param_matrix):
-            if self.cpm is not None:
-                m_cpm, param_cpm = m[:, : self.cpm.num_predictor_pixels], param[: self.cpm.num_predictor_pixels]
-                self.split_cpm_prediction.append(np.dot(m_cpm, param_cpm))
-            if self.poly_model is not None:
-                m_poly, param_poly = m[:, self.cpm.num_predictor_pixels :], param[self.cpm.num_predictor_pixels :]
-                self.split_poly_model_prediction.append(np.dot(m_poly, param_poly))
-                self.split_intercept_prediction.append(np.multiply(m_poly[:,-1], param_poly[-1]))
-        self.split_cpm_subtracted_flux = [y-cpm for y, cpm in zip(self.split_fluxes, self.split_cpm_prediction)]
-        # self.split_cpm_subtracted_flux = [y-cpm-param_poly[0] for y, cpm in zip(self.split_fluxes, self.split_cpm_prediction)]  # just to fix plot for presentation
 
-        self.cpm_subtracted_flux = np.concatenate(self.split_cpm_subtracted_flux)
-        self.cpm_prediction = np.concatenate(self.split_cpm_prediction)
+        for m, param in zip(m_tests, param_matrix):
+
+            if self.cpm is not None:
+                m_cpm, param_cpm = (
+                    m[:, : self.cpm.num_predictor_pixels],
+                    param[: self.cpm.num_predictor_pixels]
+                )
+                self.split_cpm_prediction.append(np.dot(m_cpm, param_cpm))
+
+            if self.poly_model is not None:
+                m_poly, param_poly = (
+                    m[:, self.cpm.num_predictor_pixels :],
+                    param[self.cpm.num_predictor_pixels :]
+                )
+                self.split_poly_model_prediction.append(
+                    np.dot(m_poly, param_poly)
+                )
+                self.split_intercept_prediction.append(
+                    np.multiply(m_poly[:,-1], param_poly[-1])
+                )
+
+        self.split_cpm_subtracted_flux = [
+            y-cpm for y, cpm in
+            zip(self.split_fluxes, self.split_cpm_prediction)
+        ]
+
+        self.cpm_subtracted_flux = np.concatenate(
+            self.split_cpm_subtracted_flux
+        )
+        self.cpm_prediction = np.concatenate(
+            self.split_cpm_prediction
+        )
+
         if self.poly_model is not None:
-            self.poly_model_prediction = np.concatenate(self.split_poly_model_prediction)
-            self.intercept_prediction = np.concatenate(self.split_intercept_prediction)
+            self.poly_model_prediction = np.concatenate(
+                self.split_poly_model_prediction
+            )
+            self.intercept_prediction = np.concatenate(
+                self.split_intercept_prediction
+            )
         self.param_matrix = param_matrix
+
         return (times, y_tests, predictions)
+
 
     def _reset_values(self):
         self.split_time = []
@@ -246,17 +312,35 @@ class PixelModel(object):
         self.split_rescaled_cpm_subtracted_flux = []
 
     def rescale(self):
-        # self.split_rescaled_cpm_subtracted_flux = [(flux + 1) * self.median for flux in self.split_cpm_subtracted_flux]
+
         if self.poly_model is not None:
-            self.split_rescaled_cpm_subtracted_flux = [(dt_flux-inter+1) * self.median for dt_flux, inter in zip(self.split_cpm_subtracted_flux, self.split_intercept_prediction)]
+            self.split_rescaled_cpm_subtracted_flux = [
+                (dt_flux-inter+1) * self.median
+                for dt_flux, inter in zip(
+                    self.split_cpm_subtracted_flux,
+                    self.split_intercept_prediction
+                )
+            ]
+
         else:
-            self.split_rescaled_cpm_subtracted_flux = [(dt_flux+1) * self.median for dt_flux in self.split_cpm_subtracted_flux]
-        self.rescaled_cpm_subtracted_flux = np.concatenate(self.split_rescaled_cpm_subtracted_flux)
+            self.split_rescaled_cpm_subtracted_flux = [
+                (dt_flux+1) * self.median for dt_flux in
+                self.split_cpm_subtracted_flux
+            ]
 
-    def plot_model(self, size_predictors=2):
-        return self.cpm.plot_model(size_predictors=size_predictors)
+        self.rescaled_cpm_subtracted_flux = (
+            np.concatenate(self.split_rescaled_cpm_subtracted_flux)
+        )
 
-    def summary_plot(self, figsize=(16, 5.5), zeroing=True, show_location=False, size_predictors=10):
+    def plot_model(self, size_predictors=2, figpath=None):
+
+        return self.cpm.plot_model(
+            size_predictors=size_predictors, figpath=figpath
+        )
+
+    def summary_plot(self, figsize=(16, 5.5), zeroing=True,
+                     show_location=False, size_predictors=10):
+
         fig = plt.figure(figsize=figsize)
         gs = GridSpec(2, 5, hspace=0)
 
@@ -272,13 +356,13 @@ class PixelModel(object):
         ax1.tick_params(labelsize=15)
         for axis in ['top','bottom','left','right']:
             ax1.spines[axis].set_linewidth(1.5)
-        
-        ax2.plot(self.time, self.norm_flux, "k.", ms=5, alpha=0.2, 
+
+        ax2.plot(self.time, self.norm_flux, "k.", ms=5, alpha=0.2,
                  label="Normalized Flux")
         if show_location:
-                ax2.text(x=0.98, y=0.95, s=f"[{self.row},{self.col}]", 
+                ax2.text(x=0.98, y=0.95, s=f"[{self.row},{self.col}]",
                         ha='right', va='top', transform=ax2.transAxes)
-        
+
         if zeroing:
             y_ax2 = self.cpm_prediction + self.intercept_prediction
             y_ax3 = self.cpm_subtracted_flux - self.intercept_prediction
